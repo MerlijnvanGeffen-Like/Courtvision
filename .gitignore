@@ -1,0 +1,40 @@
+# Model files (usually large)
+*.pt
+best.pt
+last.pt
+
+# Archive files
+*.rar
+*.zip
+*.7z
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Detection snapshots
+detection_snapshot_*.jpg
+detection_snapshot_*.png
+
+# OS files
+.DS_Store
+Thumbs.db
+
