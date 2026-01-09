@@ -1,0 +1,18 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background-color: var(--bg-primary);
+  transition: background-color 0.3s ease;
+}
+
+.page-content {
+  background-color: var(--bg-secondary);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 80px;
+  transition: background-color 0.3s ease;
+}
+

@@ -1,0 +1,115 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Dark theme (default) */
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111;
+  --bg-tertiary: #1a1a1f;
+  --bg-quaternary: #1f1f24;
+  --bg-quinary: #101828;
+  --bg-header: #000;
+  --bg-header-content: #1a1a1f;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --text-primary: #fafafa;
+  --text-secondary: #a3a3a3;
+  --text-tertiary: #6a7282;
+  --accent-orange: #ff751f;
+  --accent-red: #ad0030;
+  --accent-cyan: #1ec5ff;
+  --accent-orange-light: #ff8c42;
+  --shadow-sm: 0px 1px 3px 0px rgba(0, 0, 0, 0.1), 0px 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0px 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] {
+  /* Light theme */
+  --bg-primary: #ffffff;
+  --bg-secondary: #E8E4E1;
+  --bg-tertiary: #ffffff;
+  --bg-quaternary: #f3f4f6;
+  --bg-header: #ffffff;
+  --bg-header-content: #ffffff;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --accent-orange: #ff751f;
+  --accent-red: #ad0030;
+  --accent-cyan: #1ec5ff;
+  --accent-orange-light: #ff8c42;
+  --shadow-sm: 0px 1px 3px 0px rgba(0, 0, 0, 0.05), 0px 1px 2px -1px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0px 10px 15px -3px rgba(0, 0, 0, 0.05), 0px 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0px 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+/* Light mode specific adjustments */
+[data-theme="light"] .camera-view {
+  background-color: #D3D3D3;
+}
+
+[data-theme="light"] .camera-icon {
+  background-color: #e5e7eb;
+}
+
+[data-theme="light"] .nav-item:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .secondary-btn {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+}
+
+[data-theme="light"] .secondary-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+html, body {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-quaternary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+

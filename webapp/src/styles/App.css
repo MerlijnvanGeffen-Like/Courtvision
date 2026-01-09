@@ -1,0 +1,10 @@
+.app-container {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  background-color: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  transition: background-color 0.3s ease;
+}
+
