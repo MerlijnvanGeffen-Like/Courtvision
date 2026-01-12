@@ -11,6 +11,7 @@
   --bg-tertiary: #1a1a1f;
   --bg-quaternary: #1f1f24;
   --bg-quinary: #101828;
+  --bg-senary: #1F1F24;
   --bg-header: #000;
   --bg-header-content: #1a1a1f;
   --border-color: rgba(255, 255, 255, 0.08);
@@ -32,6 +33,7 @@
   --bg-secondary: #E8E4E1;
   --bg-tertiary: #ffffff;
   --bg-quaternary: #f3f4f6;
+  --bg-senary: #DED9D5;
   --bg-header: #ffffff;
   --bg-header-content: #ffffff;
   --border-color: rgba(0, 0, 0, 0.08);

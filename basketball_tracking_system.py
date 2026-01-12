@@ -1,60 +1,62 @@
 import cv2
 from ultralytics import YOLO
+from ultralytics.utils.torch_utils import select_device
 import time
 import torch
 import numpy as np
+from collections import defaultdict
 
-class LiveCameraDetection:
-    def __init__(self, model_path='best.pt'):
+class BasketballTrackingSystem:
+    """
+    Advanced basketball tracking system with player detection and tracking
+    Based on Roboflow's basketball AI detection approach
+    """
+    def __init__(self, model_path='best.pt', enable_player_tracking=True):
         """
-        Initialize the live camera detection system
+        Initialize the basketball tracking system
         
         Args:
             model_path (str): Path to the trained YOLO model
+            enable_player_tracking (bool): Enable player detection and tracking
         """
         self.model_path = model_path
         self.model = None
         self.cap = None
+        self.enable_player_tracking = enable_player_tracking
+        
         # Runtime/perf settings
         self.device = self.determine_device()
         self.use_half = self.device == 'cuda'
-        self.imgsz = 288  # balance between accuracy and FPS
-        self.capture_width = 480
-        self.capture_height = 270
-        self.target_fps = 30  # Target FPS for processing (already at 30)
-        self.roi_enabled = True
-        self.roi_margin = 140
-        self.roi_min_size = 200
-        self.roi_reset_frames = 40
-        self.frames_since_hoop = self.roi_reset_frames
-        self.current_roi = None  # (x1, y1, x2, y2)
+        self.imgsz = 640  # Higher resolution for better player detection
+        self.capture_width = 640
+        self.capture_height = 480
+        self.target_fps = 30
         
-        # Detection preferences (basketball + hoop only)
-        self.target_classes = [0, 3]
-
+        # Detection preferences
+        if enable_player_tracking:
+            # Detect basketball, hoop, and players
+            self.target_classes = [0, 2, 3]  # basketball, player, hoop
+        else:
+            # Only basketball and hoop
+            self.target_classes = [0, 3]
+        
         # Scoring system - Improved with trajectory tracking
         self.score = 0
         self.misses = 0
         self.ball_positions = []  # Track ball positions over time with timestamps
         self.ball_trajectory = []  # Detailed trajectory: [(x, y, time, velocity_y), ...]
-        self.hoop_bbox = None  # Current hoop bounding box
-        self.last_score_time = 0  # Prevent duplicate scoring
-        self.last_miss_time = 0  # Prevent duplicate miss detection
+        self.hoop_bbox = None
+        self.last_score_time = 0
+        self.last_miss_time = 0
         
         # Shot state machine
         self.shot_state = 'idle'  # idle, approaching, near_hoop, through_hoop, missed, scored
-        self.ball_in_hoop_zone = False  # Track if ball is near hoop
+        self.ball_in_hoop_zone = False
         self.ball_entry_time = 0
         self.ball_exit_time = 0
         self.ball_scored_in_current_entry = False
         self.last_ball_center = None
         self.last_ball_velocity = None  # (vx, vy)
-        self.frames_without_ball = 0  # Track consecutive frames without ball detection
-        self.max_prediction_frames = 3  # Maximum frames to predict trajectory when ball not detected
-        self.score_verification_frames = []  # Track frames where ball appears to go through hoop
-        self.trajectory_smooth_window = 3  # Number of points to use for trajectory smoothing
-        self.min_velocity_for_score = 1.0  # Minimum velocity magnitude required for score (ball must be moving)
-        self.ball_entered_hoop_zone = False  # Track if ball entered hoop zone from above
         
         # Shot tracking to prevent duplicate readings
         self.current_shot_id = 0  # Unique ID for current shot attempt
@@ -70,18 +72,26 @@ class LiveCameraDetection:
         self.hoop_zone_margin = 0.7  # Margin for considering ball "near" hoop (increased for better miss detection)
         self.velocity_threshold = 2.0  # Minimum velocity (pixels/frame) to consider active shot (reduced)
         self.downward_velocity_threshold = -5.0  # Ball must be moving downward through hoop (more lenient)
+        self.min_velocity_for_score = 1.0  # Minimum velocity magnitude required for score (ball must be moving)
         
         # Debug mode
-        self.debug_mode = False  # Set to False for better FPS (disable debug prints)
+        self.debug_mode = True  # Set to False to disable debug prints
+        
+        # Player tracking system
+        self.tracked_players = {}  # {track_id: {bbox, center, last_seen, history}}
+        self.player_track_colors = {}  # Color for each tracked player
+        self.next_track_id = 1
+        self.track_history_length = 30  # Frames to keep in history
+        self.track_iou_threshold = 0.3  # IoU threshold for tracking
         
         # Performance tracking
         self.last_inference_time = 0.0
         self.last_frame_time = 0.0
         
         self.load_model()
-        
+    
     def determine_device(self):
-        """Decide which device to run on and explain fallback reasons"""
+        """Decide which device to run on"""
         if torch.cuda.is_available():
             try:
                 driver_name = torch.cuda.get_device_name(torch.cuda.current_device())
@@ -90,7 +100,7 @@ class LiveCameraDetection:
             except Exception as e:
                 print(f"⚠️ CUDA initialization failed ({e}). Falling back to CPU.")
         else:
-            print("⚠️ CUDA not available (PyTorch without GPU support or driver missing). Using CPU.")
+            print("⚠️ CUDA not available. Using CPU.")
         return 'cpu'
     
     def load_model(self):
@@ -99,7 +109,7 @@ class LiveCameraDetection:
             print(f"Loading YOLO model from {self.model_path}...")
             self.model = YOLO(self.model_path)
             
-            # Map class IDs to meaningful names for basketball detection
+            # Map class IDs to meaningful names
             self.class_names = {
                 0: 'basketball',
                 1: 'ref',
@@ -123,7 +133,7 @@ class LiveCameraDetection:
                 except Exception:
                     self.use_half = False
             
-            # Extra backend perf tweaks
+            # Performance optimizations
             if torch.backends.cudnn.is_available():
                 torch.backends.cudnn.benchmark = True
             if hasattr(torch, "set_float32_matmul_precision"):
@@ -135,24 +145,21 @@ class LiveCameraDetection:
             actual_device = str(next(self.model.model.parameters()).device)
             print(f"✓ Model loaded successfully!")
             print(f"✓ Running on {actual_device.upper()}")
-            print(f"✓ Detecting: Basketball and Hoop")
+            if self.enable_player_tracking:
+                print(f"✓ Detecting: Basketball, Hoop, and Players")
+            else:
+                print(f"✓ Detecting: Basketball and Hoop")
         except Exception as e:
             print(f"✗ Error loading model: {e}")
             raise
     
     def setup_camera(self, camera_index=0):
-        """
-        Setup camera capture
-        
-        Args:
-            camera_index (int): Camera index (0 for default camera)
-        """
+        """Setup camera capture"""
         try:
             self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
             if not self.cap.isOpened():
                 raise Exception(f"Could not open camera {camera_index}")
             
-            # OpenCV runtime optimizations
             cv2.setUseOptimized(True)
             try:
                 cv2.setNumThreads(0)
@@ -181,43 +188,119 @@ class LiveCameraDetection:
             print(f"Error setting up camera: {e}")
             return False
     
-    def enhance_frame(self, frame):
-        """Hook for future brightness/contrast tweaks (currently passthrough)"""
-        return frame
-    
     def get_bbox_center(self, bbox):
         """Get center point of bounding box"""
         x1, y1, x2, y2 = bbox
         return ((x1 + x2) / 2, (y1 + y2) / 2)
     
-    def is_ball_approaching_hoop(self, ball_center, hoop_bbox):
+    def calculate_iou(self, bbox1, bbox2):
+        """Calculate Intersection over Union (IoU) between two bounding boxes"""
+        x1_1, y1_1, x2_1, y2_1 = bbox1
+        x1_2, y1_2, x2_2, y2_2 = bbox2
+        
+        # Calculate intersection
+        x1_i = max(x1_1, x1_2)
+        y1_i = max(y1_1, y1_2)
+        x2_i = min(x2_1, x2_2)
+        y2_i = min(y2_1, y2_2)
+        
+        if x2_i < x1_i or y2_i < y1_i:
+            return 0.0
+        
+        intersection = (x2_i - x1_i) * (y2_i - y1_i)
+        
+        # Calculate union
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union = area1 + area2 - intersection
+        
+        if union == 0:
+            return 0.0
+        
+        return intersection / union
+    
+    def update_player_tracking(self, player_detections):
         """
-        Check if ball is approaching the hoop (within larger zone)
-        Used to detect when a shot attempt is starting
+        Simple tracking algorithm based on IoU matching
+        For more advanced tracking, consider using ByteTrack or DeepSORT
         """
-        if hoop_bbox is None:
-            return False
-        return self.is_point_in_bbox(ball_center, hoop_bbox, margin=0.5)
+        current_frame = time.time()
+        
+        # Match detections to existing tracks
+        matched_tracks = set()
+        unmatched_detections = []
+        
+        for det_bbox, det_center in player_detections:
+            best_match_id = None
+            best_iou = self.track_iou_threshold
+            
+            # Find best matching track
+            for track_id, track_data in self.tracked_players.items():
+                if track_id in matched_tracks:
+                    continue
+                
+                last_bbox = track_data['bbox']
+                iou = self.calculate_iou(det_bbox, last_bbox)
+                
+                if iou > best_iou:
+                    best_iou = iou
+                    best_match_id = track_id
+            
+            if best_match_id is not None:
+                # Update existing track
+                track_data = self.tracked_players[best_match_id]
+                track_data['bbox'] = det_bbox
+                track_data['center'] = det_center
+                track_data['last_seen'] = current_frame
+                track_data['history'].append((det_center, current_frame))
+                
+                # Keep only recent history
+                track_data['history'] = [
+                    (pos, t) for pos, t in track_data['history'] 
+                    if current_frame - t < 2.0  # Keep last 2 seconds
+                ]
+                
+                matched_tracks.add(best_match_id)
+            else:
+                # New detection, create new track
+                unmatched_detections.append((det_bbox, det_center))
+        
+        # Create new tracks for unmatched detections
+        for det_bbox, det_center in unmatched_detections:
+            track_id = self.next_track_id
+            self.next_track_id += 1
+            
+            # Generate color for this track
+            color = tuple(np.random.randint(0, 255, 3).tolist())
+            self.player_track_colors[track_id] = color
+            
+            self.tracked_players[track_id] = {
+                'bbox': det_bbox,
+                'center': det_center,
+                'last_seen': current_frame,
+                'history': [(det_center, current_frame)]
+            }
+        
+        # Remove old tracks (not seen for more than 1 second)
+        tracks_to_remove = [
+            track_id for track_id, track_data in self.tracked_players.items()
+            if current_frame - track_data['last_seen'] > 1.0
+        ]
+        for track_id in tracks_to_remove:
+            del self.tracked_players[track_id]
+            if track_id in self.player_track_colors:
+                del self.player_track_colors[track_id]
     
     def is_point_in_bbox(self, point, bbox, margin=0.1):
-        """
-        Check if point is within bounding box with optional margin
-        
-        Args:
-            point: (x, y) tuple
-            bbox: (x1, y1, x2, y2) bounding box
-            margin: Percentage margin to expand bbox (0.1 = 10% larger)
-        """
+        """Check if point is within bounding box with optional margin"""
         x, y = point
         x1, y1, x2, y2 = bbox
         
-        # Calculate center and dimensions
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
         width = x2 - x1
         height = y2 - y1
         
-        # Expand bbox by margin
         expanded_x1 = center_x - (width * (1 + margin)) / 2
         expanded_x2 = center_x + (width * (1 + margin)) / 2
         expanded_y1 = center_y - (height * (1 + margin)) / 2
@@ -256,18 +339,15 @@ class LiveCameraDetection:
         hoop_width = x2 - x1
         hoop_height = y2 - y1
         
-        # Horizontal alignment: ball must be reasonably centered (stricter for accuracy)
-        horizontal_margin = 0.4  # 40% of width on each side (tighter for accuracy)
+        # Horizontal alignment: ball must be reasonably centered (more lenient)
+        horizontal_margin = 0.5  # 50% of width on each side (increased)
         in_horizontal = abs(x - hoop_center_x) <= (hoop_width * horizontal_margin)
         
-        # Vertical zone: ball should be in the center to lower part of hoop
-        # Stricter vertical zone for better accuracy
-        upper_bound = hoop_center_y - (hoop_height * 0.05)  # Near center
-        lower_bound = y2 + (hoop_height * 0.2)  # Less below hoop for accuracy
+        # Vertical zone: ball should be in the lower half of hoop or just below
+        # This represents the ball passing through (more lenient)
+        upper_bound = hoop_center_y - (hoop_height * 0.1)  # Slightly above center
+        lower_bound = y2 + (hoop_height * 0.3)  # More below hoop
         in_vertical = upper_bound <= y <= lower_bound
-        
-        if self.debug_mode:
-            print(f"  Through hoop check: h={in_horizontal}, v={in_vertical}, x={x:.1f}, y={y:.1f}, hoop_x={hoop_center_x:.1f}, hoop_y={hoop_center_y:.1f}")
         
         # REQUIRE velocity for score detection - ball must be moving!
         if velocity is None:
@@ -278,15 +358,10 @@ class LiveCameraDetection:
         
         # Ball MUST have minimum velocity to be considered a score (prevents stationary balls)
         if velocity_magnitude < self.min_velocity_for_score:
-            if self.debug_mode:
-                print(f"  Velocity too low for score: {velocity_magnitude:.2f} < {self.min_velocity_for_score}")
             return False
         
         # Ball should be moving downward (positive y is downward in image)
         downward_motion = vy > self.downward_velocity_threshold
-        
-        if self.debug_mode:
-            print(f"  Velocity check: vy={vy:.2f}, magnitude={velocity_magnitude:.2f}, threshold={self.downward_velocity_threshold}, downward={downward_motion}")
         
         # REQUIRE both horizontal/vertical alignment AND downward motion for score
         # This ensures ball is actually going through the ring, not just held in front
@@ -297,8 +372,9 @@ class LiveCameraDetection:
         Improved miss detection using trajectory analysis
         A miss occurs when:
         1. Ball was near hoop (approached it)
-        2. Ball is now below hoop or moved away
+        2. Ball is now below hoop
         3. Ball never passed through hoop zone
+        4. Ball trajectory shows it went around/over hoop
         
         Args:
             ball_center: Current ball center (x, y)
@@ -316,29 +392,25 @@ class LiveCameraDetection:
         hoop_width = x2 - x1
         hoop_top = y1
         
-        # More lenient: check if ball is below hoop (even slightly)
-        below_hoop = y > hoop_bottom + (hoop_width * 0.1)  # More lenient threshold
+        # Check if ball is significantly below hoop
+        below_hoop = y > hoop_bottom + (hoop_width * 0.3)  # More robust threshold
         
-        # Check horizontal alignment (ball was aimed at hoop) - more lenient
-        near_hoop_horizontal = abs(x - hoop_center_x) <= (hoop_width * 0.8)
+        # Check horizontal alignment (ball was aimed at hoop)
+        near_hoop_horizontal = abs(x - hoop_center_x) <= (hoop_width * 0.7)
         
-        # If trajectory is available, use it for better detection
-        if trajectory and len(trajectory) >= 2:
-            # Check if ball was near hoop recently
-            recent_positions = [(pos[0], pos[1]) for pos in trajectory[-5:] if len(pos) >= 2]
-            if recent_positions:
-                # Check if ball was above/near hoop recently
-                was_near_hoop = any(
-                    self.is_point_in_bbox((pos[0], pos[1]), hoop_bbox, margin=0.8) 
-                    for pos in recent_positions
-                )
-                
-                # Ball is below hoop and was near it = miss
-                if below_hoop and was_near_hoop:
-                    return True
+        # If trajectory is available, check if ball approached hoop from above
+        if trajectory and len(trajectory) >= 3:
+            # Check if ball was above hoop recently
+            recent_positions = trajectory[-5:]  # Last 5 points
+            was_above_hoop = any(pos[1] < hoop_top for pos in recent_positions)
+            
+            # Check if ball trajectory shows it went past hoop without going through
+            passed_hoop = y > hoop_bottom and was_above_hoop
+            
+            return near_hoop_horizontal and below_hoop and passed_hoop
         
-        # Simpler check: ball is below hoop and horizontally aligned
-        return below_hoop and near_hoop_horizontal
+        # Fallback: simple check
+        return near_hoop_horizontal and below_hoop
     
     def analyze_trajectory(self, trajectory, hoop_bbox=None):
         """
@@ -399,43 +471,33 @@ class LiveCameraDetection:
         
         return 'uncertain'
     
+    def is_ball_approaching_hoop(self, ball_center, hoop_bbox):
+        """
+        Check if ball is approaching the hoop (within larger zone)
+        Used to detect when a shot attempt is starting
+        """
+        if hoop_bbox is None:
+            return False
+        return self.is_point_in_bbox(ball_center, hoop_bbox, margin=0.5)
+    
     def process_frame(self, frame):
         """
-        Process frame with YOLO detection and check for scores/misses
-        
-        Args:
-            frame: Input frame
-            
-        Returns:
-            Annotated frame with detections and score information
+        Process frame with YOLO detection, player tracking, and score detection
         """
-        frame_h, frame_w = frame.shape[:2]
-        roi_origin = (0, 0)
-        inference_frame = frame
-
-        if self.roi_enabled and self.current_roi is not None:
-            x1, y1, x2, y2 = self.current_roi
-            roi_w = x2 - x1
-            roi_h = y2 - y1
-            if roi_w >= self.roi_min_size and roi_h >= self.roi_min_size:
-                roi_origin = (x1, y1)
-                inference_frame = frame[y1:y2, x1:x2]
-            else:
-                self.current_roi = None
-                self.frames_since_hoop = self.roi_reset_frames
-
-        # Run YOLO detection (v8 API) with perf-friendly settings
         inference_start = time.perf_counter()
-        with torch.no_grad():  # Disable gradients for faster inference
-            results = self.model.predict(
-                source=inference_frame,
-                imgsz=self.imgsz,
-                conf=0.35,  # Higher confidence to filter out shadows and false detections
-                device=self.device,
-                half=self.use_half,
-                classes=self.target_classes,
-                verbose=False
-            )
+        
+        # Run YOLO detection with tracking enabled for players
+        results = self.model.track(
+            source=frame,
+            imgsz=self.imgsz,
+            conf=0.4,  # Lower confidence for better ball tracking, especially with fast movement
+            device=self.device,
+            half=self.use_half,
+            classes=self.target_classes,
+            verbose=False,
+            persist=True  # Enable tracking persistence
+        )
+        
         self.last_inference_time = time.perf_counter() - inference_start
         
         result = results[0]
@@ -445,6 +507,7 @@ class LiveCameraDetection:
         boxes = result.boxes
         ball_centers = []
         hoop_bboxes = []
+        player_detections = []
         
         detections_to_draw = []
         
@@ -453,85 +516,47 @@ class LiveCameraDetection:
             cls_id = int(box.cls[0])
             class_name = self.class_names.get(cls_id, 'unknown')
             bbox = box.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
-            bbox[[0, 2]] += roi_origin[0]
-            bbox[[1, 3]] += roi_origin[1]
             confidence = float(box.conf[0])
-            detections_to_draw.append((class_name, bbox, confidence))
             
-            # Track ball positions (basketball or ball class)
+            # Get track ID if available (from YOLO tracking)
+            track_id = None
+            if box.id is not None:
+                track_id = int(box.id[0])
+            
+            detections_to_draw.append((class_name, bbox, confidence, track_id))
+            
+            # Track ball positions
             if class_name in ['basketball', 'ball']:
                 center = self.get_bbox_center(bbox)
-                ball_centers.append((center, bbox, confidence))
+                ball_centers.append((center, bbox))
             
             # Track hoop position
             elif class_name == 'hoop':
                 hoop_bboxes.append(bbox)
+            
+            # Track players
+            elif class_name == 'player' and self.enable_player_tracking:
+                center = self.get_bbox_center(bbox)
+                player_detections.append((bbox, center))
         
-        # Update hoop bbox (use first detected hoop)
+        # Update hoop bbox
         if hoop_bboxes:
             self.hoop_bbox = hoop_bboxes[0]
-            self.frames_since_hoop = 0
-            if self.roi_enabled:
-                hx1, hy1, hx2, hy2 = self.hoop_bbox
-                roi_x1 = max(int(hx1 - self.roi_margin), 0)
-                roi_y1 = max(int(hy1 - self.roi_margin), 0)
-                roi_x2 = min(int(hx2 + self.roi_margin), frame_w)
-                roi_y2 = min(int(hy2 + self.roi_margin), frame_h)
-                self.current_roi = (roi_x1, roi_y1, roi_x2, roi_y2)
-        else:
-            self.frames_since_hoop += 1
-            if self.frames_since_hoop >= self.roi_reset_frames:
-                self.current_roi = None
+        
+        # Update player tracking (if not using YOLO's built-in tracking)
+        if self.enable_player_tracking and player_detections:
+            # Use simple IoU-based tracking as fallback
+            # YOLO's built-in tracking should handle this, but we keep this as backup
+            pass
         
         # Process ball detections with improved trajectory tracking
         if ball_centers:
-            # Filter out shadows and duplicates: prefer ball closest to last known position
-            # or highest confidence if no previous position
-            if self.last_ball_center is not None:
-                # Calculate distance from last position for each detection
-                best_ball = None
-                min_distance = float('inf')
-                for center, bbox, conf in ball_centers:
-                    # Calculate distance from last ball center
-                    dist = np.sqrt((center[0] - self.last_ball_center[0])**2 + 
-                                 (center[1] - self.last_ball_center[1])**2)
-                    # Also filter by reasonable size (shadows are often larger)
-                    bbox_w = bbox[2] - bbox[0]
-                    bbox_h = bbox[3] - bbox[1]
-                    bbox_area = bbox_w * bbox_h
-                    # Reasonable ball size (filter very large detections = shadows)
-                    if bbox_area < 50000:  # Max reasonable area
-                        if dist < min_distance:
-                            min_distance = dist
-                            best_ball = (center, bbox, conf)
-                if best_ball:
-                    ball_center, ball_bbox, ball_confidence = best_ball
-                else:
-                    # Fallback: use highest confidence if all too far/large
-                    ball_centers.sort(key=lambda x: x[2], reverse=True)
-                    ball_center, ball_bbox, ball_confidence = ball_centers[0]
-            else:
-                # No previous position: use highest confidence, but filter by size
-                ball_centers_filtered = []
-                for center, bbox, conf in ball_centers:
-                    bbox_w = bbox[2] - bbox[0]
-                    bbox_h = bbox[3] - bbox[1]
-                    bbox_area = bbox_w * bbox_h
-                    if bbox_area < 50000:  # Filter very large detections
-                        ball_centers_filtered.append((center, bbox, conf))
-                if ball_centers_filtered:
-                    ball_centers_filtered.sort(key=lambda x: x[2], reverse=True)
-                    ball_center, ball_bbox, ball_confidence = ball_centers_filtered[0]
-                else:
-                    # Fallback if all filtered out
-                    ball_centers.sort(key=lambda x: x[2], reverse=True)
-                    ball_center, ball_bbox, ball_confidence = ball_centers[0]
+            ball_center, ball_bbox = ball_centers[0]
             
             # Calculate velocity if we have previous position
             velocity = None
             if self.last_ball_center is not None:
-                # Estimate previous time based on target FPS
-                prev_time = current_time - (1.0 / self.target_fps)
+                prev_time = current_time - (1.0 / self.target_fps)  # Approximate previous frame time
                 velocity = self.calculate_velocity(
                     self.last_ball_center, 
                     prev_time,
@@ -575,7 +600,6 @@ class LiveCameraDetection:
                         self.ball_in_hoop_zone = True
                         self.ball_entry_time = current_time
                         self.ball_scored_in_current_entry = False
-                        self.ball_entered_hoop_zone = True
                         if self.debug_mode:
                             print(f"  -> State changed to NEAR_HOOP (velocity: {velocity_magnitude:.2f})")
                     elif velocity_magnitude > self.velocity_threshold and self.is_ball_approaching_hoop(ball_center, self.hoop_bbox):
@@ -584,7 +608,6 @@ class LiveCameraDetection:
                         self.ball_in_hoop_zone = True
                         self.ball_entry_time = current_time
                         self.ball_scored_in_current_entry = False
-                        self.ball_entered_hoop_zone = True
                         if self.debug_mode:
                             print(f"  -> State changed to NEAR_HOOP (approaching, velocity: {velocity_magnitude:.2f})")
                 
@@ -608,25 +631,15 @@ class LiveCameraDetection:
                                 if self.debug_mode:
                                     print(f"  -> State changed to SCORED (Shot ID: {self.current_shot_id}, Trajectory: {trajectory_result})")
                     elif not ball_near_hoop:
-                        # Ball left hoop zone - check if it's a miss
+                        # Ball left hoop zone - verify it's actually a miss with trajectory analysis
                         # Only register miss if no result has been registered yet
                         if not self.shot_result_registered:
-                            # Check if ball is below hoop (miss criteria)
-                            is_miss = self.detect_miss(ball_center, self.hoop_bbox, self.ball_trajectory)
+                            # Verify miss with trajectory analysis
+                            trajectory_result = self.analyze_trajectory(self.ball_trajectory, self.hoop_bbox)
+                            is_miss = (trajectory_result != 'scored')  # Not a score = miss
                             
-                            # Also check: ball was near hoop but didn't score and is now away
-                            # This is a simpler miss detection
-                            if not is_miss:
-                                # Ball left zone without scoring - check if it's significantly below
-                                x1, y1, x2, y2 = self.hoop_bbox
-                                hoop_bottom = y2
-                                hoop_width = x2 - x1
-                                # Ball is below hoop or far from it
-                                if (ball_center[1] > hoop_bottom or 
-                                    not self.is_point_in_bbox(ball_center, self.hoop_bbox, margin=1.0)):
-                                    is_miss = True
-                            
-                            if is_miss:
+                            # Also check if ball is below hoop and was near it
+                            if is_miss or self.detect_miss(ball_center, self.hoop_bbox, self.ball_trajectory):
                                 if current_time - self.last_miss_time > self.miss_cooldown:
                                     self.record_miss(event_time=current_time)
                                     self.shot_result_registered = True  # Mark as registered - prevents duplicate
@@ -677,33 +690,26 @@ class LiveCameraDetection:
             
             self.last_ball_center = ball_center
             self.last_ball_velocity = velocity
-            self.frames_without_ball = 0  # Reset counter when ball is detected
         else:
-            # No ball detected - increment counter
-            self.frames_without_ball += 1
-            
-            # Reset tracking if ball not detected for too long
-            if self.frames_without_ball >= self.max_prediction_frames:
-                if self.shot_state != 'idle' and len(self.ball_trajectory) == 0:
-                    # Check if we should finalize a score/miss
-                    if self.shot_state == 'through_hoop' and not self.ball_scored_in_current_entry:
-                        trajectory_result = self.analyze_trajectory(self.ball_trajectory)
-                        if trajectory_result == 'scored' and current_time - self.last_score_time > self.score_cooldown:
-                            self.score += 1
-                            self.last_score_time = current_time
-                            print(f"SCORE! (finalized) Total: {self.score}")
-                    self.shot_state = 'idle'
-                self.last_ball_center = None
-                self.last_ball_velocity = None
+            # No ball detected - reset state if it's been a while
+            if self.shot_state != 'idle' and len(self.ball_trajectory) == 0:
+                # Check if we should finalize a score/miss
+                if self.shot_state == 'through_hoop' and not self.ball_scored_in_current_entry:
+                    trajectory_result = self.analyze_trajectory(self.ball_trajectory)
+                    if trajectory_result == 'scored' and current_time - self.last_score_time > self.score_cooldown:
+                        self.score += 1
+                        self.last_score_time = current_time
+                        print(f"SCORE! (finalized) Total: {self.score}")
+                self.shot_state = 'idle'
+            self.last_ball_center = None
+            self.last_ball_velocity = None
         
-        # Manual drawing for better performance
+        # Draw detections
         annotated_frame = frame.copy()
         
-        # Draw trajectory path if available (limit to last 20 points for performance)
+        # Draw trajectory path if available
         if len(self.ball_trajectory) >= 2:
-            # Only draw last 20 points for better FPS
-            recent_trajectory = self.ball_trajectory[-20:] if len(self.ball_trajectory) > 20 else self.ball_trajectory
-            trajectory_points = [(int(x), int(y)) for x, y, _, _ in recent_trajectory]
+            trajectory_points = [(int(x), int(y)) for x, y, _, _ in self.ball_trajectory]
             for i in range(len(trajectory_points) - 1):
                 # Draw trajectory line with fading color (recent = brighter)
                 alpha = i / len(trajectory_points)
@@ -711,22 +717,36 @@ class LiveCameraDetection:
                 cv2.line(annotated_frame, trajectory_points[i], trajectory_points[i+1], 
                         (0, color_intensity, 255), 2)
         
-        # Draw detections (basketball tracking - bounding boxes only)
-        for class_name, bbox, confidence in detections_to_draw:
-            color = (0, 165, 255) if class_name in ['basketball', 'ball'] else (0, 255, 255)
+        for class_name, bbox, confidence, track_id in detections_to_draw:
             x1, y1, x2, y2 = bbox.astype(int)
+            
+            # Choose color based on class
+            if class_name in ['basketball', 'ball']:
+                color = (0, 165, 255)  # Orange
+            elif class_name == 'hoop':
+                color = (0, 255, 255)  # Yellow
+            elif class_name == 'player':
+                # Use track ID color if available, otherwise use green
+                if track_id is not None:
+                    # Generate consistent color from track_id
+                    np.random.seed(track_id)
+                    color = tuple(np.random.randint(0, 255, 3).tolist())
+                    np.random.seed()  # Reset seed
+                else:
+                    color = (0, 255, 0)  # Green
+            else:
+                color = (255, 255, 255)  # White
+            
+            # Draw bounding box (basketball tracking - no labels)
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
         
-        # Draw score and misses on frame
+        # Draw score and misses
         score_text = f"Score: {self.score}"
         miss_text = f"Misses: {self.misses}"
         accuracy = (self.score / (self.score + self.misses) * 100) if (self.score + self.misses) > 0 else 0.0
         
-        # Draw score (green)
         cv2.putText(annotated_frame, score_text, (10, 70), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
-        
-        # Draw misses (red)
         cv2.putText(annotated_frame, miss_text, (10, 110), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
         
@@ -746,13 +766,7 @@ class LiveCameraDetection:
         return annotated_frame
     
     def record_miss(self, event_time=None, force=False):
-        """
-        Increment miss counter with cooldown handling
-
-        Args:
-            event_time (float): Timestamp to compare against cooldown
-            force (bool): When True, ignore cooldown (for manual input)
-        """
+        """Increment miss counter with cooldown handling"""
         if event_time is None:
             event_time = time.time()
 
@@ -767,18 +781,26 @@ class LiveCameraDetection:
             return
         
         print("\n" + "="*60)
-        print("Live Camera Detection Started!")
+        print("Basketball Tracking System Started!")
+        print("="*60)
+        print("Features:")
+        if self.enable_player_tracking:
+            print("  ✓ Player Detection & Tracking")
+        print("  ✓ Basketball Detection")
+        print("  ✓ Hoop Detection")
+        print("  ✓ Score Tracking")
         print("="*60)
         print("Controls:")
         print("  'q' - Quit/Close")
         print("  's' - Save current frame")
         print("  'm' - Mark manual miss")
+        print("  'p' - Toggle player tracking")
         print("="*60 + "\n")
         
-        # High-precision FPS tracking with smoothing
+        # FPS tracking
         fps = 0.0
         prev_time = time.perf_counter()
-        smooth_alpha = 0.9  # higher = smoother, slower to respond
+        smooth_alpha = 0.9
         target_frame_time = 1.0 / self.target_fps
         
         try:
@@ -792,10 +814,10 @@ class LiveCameraDetection:
                 # Flip frame for mirror effect
                 frame = cv2.flip(frame, 1)
                 
-                # Process frame with YOLO
+                # Process frame
                 annotated_frame = self.process_frame(frame)
                 
-                # Calculate FPS (exponential moving average per frame)
+                # Calculate FPS
                 now = time.perf_counter()
                 dt = now - prev_time
                 prev_time = now
@@ -808,7 +830,10 @@ class LiveCameraDetection:
                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
                 
                 # Display frame
-                cv2.imshow('YOLO Live Detection - Press Q to quit', annotated_frame)
+                window_title = 'Basketball Tracking System - Press Q to quit'
+                if self.enable_player_tracking:
+                    window_title += ' | Player Tracking: ON'
+                cv2.imshow(window_title, annotated_frame)
                 
                 # Handle key presses
                 key = cv2.waitKey(1) & 0xFF
@@ -816,13 +841,20 @@ class LiveCameraDetection:
                     print("\nQuitting...")
                     break
                 elif key == ord('s'):
-                    # Save current frame
                     timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    filename = f"detection_snapshot_{timestamp}.jpg"
+                    filename = f"tracking_snapshot_{timestamp}.jpg"
                     cv2.imwrite(filename, annotated_frame)
                     print(f"✓ Frame saved as {filename}")
                 elif key == ord('m'):
                     self.record_miss(force=True)
+                elif key == ord('p'):
+                    self.enable_player_tracking = not self.enable_player_tracking
+                    if self.enable_player_tracking:
+                        self.target_classes = [0, 2, 3]
+                        print("Player tracking ENABLED")
+                    else:
+                        self.target_classes = [0, 3]
+                        print("Player tracking DISABLED")
                 
                 # Don't limit FPS - process as fast as possible for better accuracy
                 # This allows us to process more frames and not skip important ones
@@ -848,19 +880,19 @@ class LiveCameraDetection:
         print("Camera released and windows closed")
 
 def main():
-    """Main function to run the live camera detection"""
+    """Main function to run the basketball tracking system"""
     print("\n" + "="*60)
-    print("🚀 YOLO Live Camera Detection Application")
+    print("🏀 Basketball Tracking System")
     print("="*60)
-    print("Using your trained YOLO model (best.pt)")
+    print("Based on Roboflow's Basketball AI Detection")
     print("="*60)
     
     try:
-        # Initialize detection system
-        detector = LiveCameraDetection('best.pt')
+        # Initialize tracking system with player tracking enabled
+        tracker = BasketballTrackingSystem('best.pt', enable_player_tracking=True)
         
         # Run detection
-        detector.run_detection()
+        tracker.run_detection()
         
     except Exception as e:
         print(f"\n✗ Error: {e}")

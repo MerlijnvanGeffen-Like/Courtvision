@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Header from '../components/Header'
 import BottomNav from '../components/BottomNav'
 import './Page.css'
 import './Home.css'
+
+const API_BASE_URL = 'http://localhost:5000/api'
 
 function Home() {
   const [score, setScore] = useState(0)
@@ -12,22 +14,120 @@ function Home() {
   const [isActive, setIsActive] = useState(false)
   const [isPaused, setIsPaused] = useState(true)
   const [cameraActive, setCameraActive] = useState(false)
+  const [playersDetected, setPlayersDetected] = useState(0)
+  
+  const timerRef = useRef(null)
+  const startTimeRef = useRef(null)
+  const elapsedTimeRef = useRef(0)
 
   const accuracy = totalShots > 0 ? ((madeShots / totalShots) * 100).toFixed(1) : 0
 
-  const handleStart = () => {
-    if (!cameraActive) {
-      setCameraActive(true)
+  // Fetch stats from API
+  const fetchStats = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/stats`)
+      if (response.ok) {
+        const data = await response.json()
+        setScore(data.score || 0)
+        setMadeShots(data.score || 0)
+        setTotalShots(data.total_shots || 0)
+        setPlayersDetected(data.players_detected || 0)
+        setCameraActive(data.camera_active || false)
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error)
+    }
+  }
+
+  // Poll stats every second
+  useEffect(() => {
+    const interval = setInterval(fetchStats, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Timer logic
+  useEffect(() => {
+    if (isActive && !isPaused) {
+      startTimeRef.current = Date.now() - elapsedTimeRef.current
+      timerRef.current = setInterval(() => {
+        const elapsed = Date.now() - startTimeRef.current
+        elapsedTimeRef.current = elapsed
+        const minutes = Math.floor(elapsed / 60000)
+        const seconds = Math.floor((elapsed % 60000) / 1000)
+        setTime(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`)
+      }, 1000)
     } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
+    }
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
+    }
+  }, [isActive, isPaused])
+
+  const handleStart = async () => {
+    if (!cameraActive) {
+      // Start camera
+      try {
+        const response = await fetch(`${API_BASE_URL}/camera/start`, {
+          method: 'POST'
+        })
+        if (response.ok) {
+          setCameraActive(true)
+          setIsActive(true)
+          setIsPaused(false)
+          elapsedTimeRef.current = 0
+          setTime('00:00')
+        } else {
+          alert('Failed to start camera')
+        }
+      } catch (error) {
+        console.error('Error starting camera:', error)
+        alert('Error starting camera. Make sure the API server is running.')
+      }
+    } else {
+      // Toggle pause/resume
       setIsPaused(!isPaused)
       setIsActive(!isPaused)
     }
   }
 
-  const handleStopCamera = () => {
-    setCameraActive(false)
-    setIsActive(false)
-    setIsPaused(true)
+  const handleStopCamera = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/camera/stop`, {
+        method: 'POST'
+      })
+      if (response.ok) {
+        setCameraActive(false)
+        setIsActive(false)
+        setIsPaused(true)
+        elapsedTimeRef.current = 0
+        setTime('00:00')
+      }
+    } catch (error) {
+      console.error('Error stopping camera:', error)
+    }
+  }
+
+  const handleReset = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/reset`, {
+        method: 'POST'
+      })
+      if (response.ok) {
+        setScore(0)
+        setMadeShots(0)
+        setTotalShots(0)
+        elapsedTimeRef.current = 0
+        setTime('00:00')
+        fetchStats()
+      }
+    } catch (error) {
+      console.error('Error resetting stats:', error)
+    }
   }
 
   return (
@@ -96,7 +196,18 @@ function Home() {
                   <div className="live-dot"></div>
                   <span>LIVE</span>
                 </div>
+                {playersDetected > 0 && (
+                  <div className="players-indicator">
+                    <span>{playersDetected} Player{playersDetected !== 1 ? 's' : ''} Detected</span>
+                  </div>
+                )}
               </div>
+              <img 
+                src={`${API_BASE_URL}/video_feed`} 
+                alt="Camera Feed" 
+                className="camera-feed"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
               <button className="stop-camera-btn" onClick={handleStopCamera}>
                 <img src="/icons/stopcam.svg" alt="Stop Camera" className="icon-img" />
                 Stop Camera
@@ -129,7 +240,7 @@ function Home() {
             )}
             {isPaused ? 'Start' : 'Pause'}
           </button>
-          <button className="secondary-btn">
+          <button className="secondary-btn" onClick={handleReset}>
             <img src="/icons/restart.svg" alt="Restart" className="icon-img" />
           </button>
         </div>
