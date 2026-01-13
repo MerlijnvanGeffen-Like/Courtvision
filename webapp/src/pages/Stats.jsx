@@ -1,15 +1,54 @@
+import { useState, useEffect } from 'react'
 import Header from '../components/Header'
 import BottomNav from '../components/BottomNav'
+import { statsAPI } from '../utils/api'
 import './Page.css'
 import './Stats.css'
 
 function Stats() {
-  const currentMade = 0
-  const currentAccuracy = 0.0
-  const totalSessions = 0
-  const totalShotsMade = 0
-  const averageAccuracy = 0.0
-  const totalPlayTime = '0m'
+  const [stats, setStats] = useState({
+    current_session: {
+      shots_made: 0,
+      shots_missed: 0,
+      total_shots: 0,
+      accuracy: 0.0
+    },
+    all_time: {
+      total_sessions: 0,
+      total_shots_made: 0,
+      total_shots_missed: 0,
+      total_shots: 0,
+      average_accuracy: 0.0,
+      total_play_time_seconds: 0,
+      total_play_time_formatted: '0m'
+    }
+  })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const data = await statsAPI.getStats()
+        setStats(data)
+      } catch (error) {
+        console.error('Error fetching stats:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchStats()
+    // Refresh stats every 5 seconds
+    const interval = setInterval(fetchStats, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const currentMade = stats.current_session?.shots_made || 0
+  const currentAccuracy = stats.current_session?.accuracy || 0.0
+  const totalSessions = stats.all_time?.total_sessions || 0
+  const totalShotsMade = stats.all_time?.total_shots_made || 0
+  const averageAccuracy = stats.all_time?.average_accuracy || 0.0
+  const totalPlayTime = stats.all_time?.total_play_time_formatted || '0m'
 
   return (
     <div className="page stats-page">

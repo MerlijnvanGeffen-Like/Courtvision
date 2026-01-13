@@ -360,12 +360,12 @@ class BasketballTrackingSystem:
         if velocity_magnitude < self.min_velocity_for_score:
             return False
         
-        # Ball should be moving downward (positive y is downward in image)
-        downward_motion = vy > self.downward_velocity_threshold
+            # Ball should be moving downward (positive y is downward in image)
+            downward_motion = vy > self.downward_velocity_threshold
         
         # REQUIRE both horizontal/vertical alignment AND downward motion for score
         # This ensures ball is actually going through the ring, not just held in front
-        return in_horizontal and in_vertical and downward_motion
+            return in_horizontal and in_vertical and downward_motion
     
     def detect_miss(self, ball_center, hoop_bbox, trajectory=None):
         """
@@ -462,12 +462,12 @@ class BasketballTrackingSystem:
         
         if velocities:
             # Check for consistent downward motion
-            recent_velocities = velocities[-3:] if len(velocities) >= 3 else velocities
-            avg_downward = sum(vy for vy in recent_velocities if vy > 0) / len(recent_velocities) if recent_velocities else 0
-            
+        recent_velocities = velocities[-3:] if len(velocities) >= 3 else velocities
+        avg_downward = sum(vy for vy in recent_velocities if vy > 0) / len(recent_velocities) if recent_velocities else 0
+        
             # Require stronger downward motion for score
             if avg_downward > 2.0:  # Increased threshold for accuracy
-                return 'scored'
+            return 'scored'
         
         return 'uncertain'
     
@@ -620,15 +620,15 @@ class BasketballTrackingSystem:
                         # Score only if trajectory analysis confirms or if ball is clearly through
                         if (trajectory_result == 'scored' or 
                             (trajectory_result == 'uncertain' and len(self.ball_trajectory) >= 5)):
-                            # Ball is through hoop - score it! (only if not already registered)
-                            if not self.shot_result_registered and current_time - self.last_score_time > self.score_cooldown:
-                                self.score += 1
-                                self.last_score_time = current_time
-                                self.ball_scored_in_current_entry = True
-                                self.shot_result_registered = True  # Mark as registered - prevents duplicate
-                                self.shot_state = 'scored'
-                                print(f"🎯 SCORE! Total: {self.score} (Shot ID: {self.current_shot_id})")
-                                if self.debug_mode:
+                        # Ball is through hoop - score it! (only if not already registered)
+                        if not self.shot_result_registered and current_time - self.last_score_time > self.score_cooldown:
+                            self.score += 1
+                            self.last_score_time = current_time
+                            self.ball_scored_in_current_entry = True
+                            self.shot_result_registered = True  # Mark as registered - prevents duplicate
+                            self.shot_state = 'scored'
+                            print(f"🎯 SCORE! Total: {self.score} (Shot ID: {self.current_shot_id})")
+                            if self.debug_mode:
                                     print(f"  -> State changed to SCORED (Shot ID: {self.current_shot_id}, Trajectory: {trajectory_result})")
                     elif not ball_near_hoop:
                         # Ball left hoop zone - verify it's actually a miss with trajectory analysis
@@ -640,12 +640,12 @@ class BasketballTrackingSystem:
                             
                             # Also check if ball is below hoop and was near it
                             if is_miss or self.detect_miss(ball_center, self.hoop_bbox, self.ball_trajectory):
-                                if current_time - self.last_miss_time > self.miss_cooldown:
-                                    self.record_miss(event_time=current_time)
-                                    self.shot_result_registered = True  # Mark as registered - prevents duplicate
-                                    self.shot_state = 'missed'
-                                    if self.debug_mode:
-                                        print(f"  -> State changed to MISSED (ball left zone without scoring, Shot ID: {self.current_shot_id})")
+                            if current_time - self.last_miss_time > self.miss_cooldown:
+                                self.record_miss(event_time=current_time)
+                                self.shot_result_registered = True  # Mark as registered - prevents duplicate
+                                self.shot_state = 'missed'
+                                if self.debug_mode:
+                                    print(f"  -> State changed to MISSED (ball left zone without scoring, Shot ID: {self.current_shot_id})")
                         else:
                             # Result already registered for this shot, reset
                             self.shot_state = 'idle'
@@ -679,13 +679,13 @@ class BasketballTrackingSystem:
                     trajectory_result = self.analyze_trajectory(self.ball_trajectory, self.hoop_bbox)
                     # Only score if trajectory confirms or we have enough trajectory data
                     if trajectory_result != 'missed' and len(self.ball_trajectory) >= 4:
-                        self.score += 1
-                        self.last_score_time = current_time
-                        self.ball_scored_in_current_entry = True
-                        self.shot_result_registered = True  # Mark as registered - prevents duplicate
-                        self.shot_state = 'scored'
-                        print(f"🎯 SCORE! (fallback) Total: {self.score} (Shot ID: {self.current_shot_id})")
-                        if self.debug_mode:
+                    self.score += 1
+                    self.last_score_time = current_time
+                    self.ball_scored_in_current_entry = True
+                    self.shot_result_registered = True  # Mark as registered - prevents duplicate
+                    self.shot_state = 'scored'
+                    print(f"🎯 SCORE! (fallback) Total: {self.score} (Shot ID: {self.current_shot_id})")
+                    if self.debug_mode:
                             print(f"  -> Fallback score detected (Shot ID: {self.current_shot_id}, Trajectory: {trajectory_result})")
             
             self.last_ball_center = ball_center
@@ -753,7 +753,7 @@ class BasketballTrackingSystem:
         # Draw accuracy
         accuracy_text = f"Accuracy: {accuracy:.1f}%"
         cv2.putText(annotated_frame, accuracy_text, (10, 150), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
         
         # Draw scored/missed status only
         if self.shot_state == 'scored':

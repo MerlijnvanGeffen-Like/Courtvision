@@ -1,21 +1,41 @@
+import { useState, useEffect } from 'react'
 import Header from '../components/Header'
 import BottomNav from '../components/BottomNav'
+import { leaderboardAPI } from '../utils/api'
 import './Page.css'
 import './Leaderboard.css'
 
 function Leaderboard() {
-  const players = [
-    { rank: 1, name: 'Micheal J.', score: 2654, accuracy: 87, isTop3: true },
-    { rank: 2, name: 'LeBron J.', score: 2522, accuracy: 82, isTop3: true },
-    { rank: 3, name: 'Kobe B.', score: 2371, accuracy: 84, isTop3: true },
-    { rank: 4, name: 'Steph C.', score: 2215, accuracy: 91, isTop3: false },
-    { rank: 5, name: 'Kevin D.', score: 2089, accuracy: 78, isTop3: false },
-    { rank: 6, name: 'O\'Neal S.', score: 1842, accuracy: 72, isTop3: false },
-  ]
+  const [leaderboard, setLeaderboard] = useState({
+    players: [],
+    user_rank: null,
+    top_score: 0,
+    total_players: 0
+  })
+  const [loading, setLoading] = useState(true)
 
-  const userRank = 156
-  const topScore = 2847
-  const totalPlayers = 1234
+  useEffect(() => {
+    const fetchLeaderboard = async () => {
+      try {
+        const data = await leaderboardAPI.getLeaderboard()
+        setLeaderboard(data)
+      } catch (error) {
+        console.error('Error fetching leaderboard:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchLeaderboard()
+    // Refresh leaderboard every 30 seconds
+    const interval = setInterval(fetchLeaderboard, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const players = leaderboard.players
+  const userRank = leaderboard.user_rank
+  const topScore = leaderboard.top_score
+  const totalPlayers = leaderboard.total_players
 
   return (
     <div className="page leaderboard-page">
@@ -34,7 +54,9 @@ function Leaderboard() {
             <div className="summary-card">
               <img src="/icons/yourrank.svg" alt="Your Rank" className="summary-card-icon" />
               <div className="summary-label">Your Rank</div>
-              <div className="summary-value">#{userRank}</div>
+              <div className="summary-value">
+                {userRank ? `#${userRank}` : 'N/A'}
+              </div>
             </div>
             <div className="summary-card">
               <img src="/icons/topscore.svg" alt="Top Score" className="summary-card-icon" />
@@ -49,7 +71,12 @@ function Leaderboard() {
           </div>
 
           <div className="players-list">
-            {players.map((player) => (
+            {loading ? (
+              <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>
+            ) : players.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center' }}>No players yet. Be the first!</div>
+            ) : (
+              players.map((player) => (
               <div 
                 key={player.rank} 
                 className={`player-card ${player.isTop3 ? 'top3' : ''}`}
@@ -63,29 +90,22 @@ function Leaderboard() {
                 )}
                 <div className="player-info">
                   <div className="player-header">
-                    <h3 className="player-name">{player.name}</h3>
+                    <h3 className="player-name">{player.username}</h3>
                     {player.isTop3 && (
                       <span className="top3-badge">Top 3</span>
                     )}
                   </div>
                   <div className="player-details">
-                    {player.sessions ? (
-                      <>
-                        <span>{player.sessions} sessies</span>
-                        <span>•</span>
-                        <span>{player.accuracy}% accuraatheid</span>
-                      </>
-                    ) : (
-                      <span>{player.accuracy}% accuracy</span>
-                    )}
+                    <span>{player.average_accuracy}% accuracy</span>
                   </div>
                 </div>
                 <div className="player-score">
-                  <div className="player-score-value">{player.score.toLocaleString()}</div>
+                  <div className="player-score-value">{player.total_shots_made.toLocaleString()}</div>
                   <div className="player-score-label">scored</div>
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

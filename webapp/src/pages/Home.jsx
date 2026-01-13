@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Header from '../components/Header'
 import BottomNav from '../components/BottomNav'
+import { statsAPI, cameraAPI } from '../utils/api'
 import './Page.css'
 import './Home.css'
 
@@ -25,17 +26,22 @@ function Home() {
   // Fetch stats from API
   const fetchStats = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/stats`)
-      if (response.ok) {
-        const data = await response.json()
-        setScore(data.score || 0)
-        setMadeShots(data.score || 0)
-        setTotalShots(data.total_shots || 0)
-        setPlayersDetected(data.players_detected || 0)
-        setCameraActive(data.camera_active || false)
+      const data = await statsAPI.getStats()
+      if (data.current_session) {
+        setScore(data.current_session.shots_made || 0)
+        setMadeShots(data.current_session.shots_made || 0)
+        setTotalShots(data.current_session.total_shots || 0)
       }
+      setCameraActive(data.camera_active || false)
     } catch (error) {
       console.error('Error fetching stats:', error)
+      // Also check camera status separately if stats fails
+      try {
+        const status = await cameraAPI.getStatus()
+        setCameraActive(status.active || false)
+      } catch (statusError) {
+        console.error('Error fetching camera status:', statusError)
+      }
     }
   }
 
@@ -72,21 +78,20 @@ function Home() {
     if (!cameraActive) {
       // Start camera
       try {
-        const response = await fetch(`${API_BASE_URL}/camera/start`, {
-          method: 'POST'
-        })
-        if (response.ok) {
+        const response = await cameraAPI.start()
+        if (response.status === 'success') {
           setCameraActive(true)
           setIsActive(true)
           setIsPaused(false)
           elapsedTimeRef.current = 0
           setTime('00:00')
-        } else {
-          alert('Failed to start camera')
+          // Refresh stats after starting
+          fetchStats()
         }
       } catch (error) {
         console.error('Error starting camera:', error)
-        alert('Error starting camera. Make sure the API server is running.')
+        const errorMessage = error.message || 'Failed to start camera. Make sure you are logged in.'
+        alert('Error starting camera: ' + errorMessage)
       }
     } else {
       // Toggle pause/resume
@@ -97,16 +102,13 @@ function Home() {
 
   const handleStopCamera = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/camera/stop`, {
-        method: 'POST'
-      })
-      if (response.ok) {
-        setCameraActive(false)
-        setIsActive(false)
-        setIsPaused(true)
-        elapsedTimeRef.current = 0
-        setTime('00:00')
-      }
+      await cameraAPI.stop()
+      setCameraActive(false)
+      setIsActive(false)
+      setIsPaused(true)
+      elapsedTimeRef.current = 0
+      setTime('00:00')
+      fetchStats()
     } catch (error) {
       console.error('Error stopping camera:', error)
     }
@@ -114,17 +116,13 @@ function Home() {
 
   const handleReset = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/reset`, {
-        method: 'POST'
-      })
-      if (response.ok) {
-        setScore(0)
-        setMadeShots(0)
-        setTotalShots(0)
-        elapsedTimeRef.current = 0
-        setTime('00:00')
-        fetchStats()
-      }
+      await cameraAPI.reset()
+      setScore(0)
+      setMadeShots(0)
+      setTotalShots(0)
+      elapsedTimeRef.current = 0
+      setTime('00:00')
+      fetchStats()
     } catch (error) {
       console.error('Error resetting stats:', error)
     }
@@ -203,10 +201,14 @@ function Home() {
                 )}
               </div>
               <img 
-                src={`${API_BASE_URL}/video_feed`} 
+                src={`${API_BASE_URL}/video_feed?t=${Date.now()}`} 
                 alt="Camera Feed" 
                 className="camera-feed"
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => {
+                  console.error('Video feed error:', e)
+                  e.target.style.display = 'none'
+                }}
               />
               <button className="stop-camera-btn" onClick={handleStopCamera}>
                 <img src="/icons/stopcam.svg" alt="Stop Camera" className="icon-img" />
