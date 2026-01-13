@@ -41,6 +41,7 @@ class LiveCameraDetection:
         self.hoop_bbox = None  # Current hoop bounding box
         self.last_score_time = 0  # Prevent duplicate scoring
         self.last_miss_time = 0  # Prevent duplicate miss detection
+        self.last_result_time = 0  # Global cooldown: time of last result (score or miss) - prevents any result within 2 seconds
         self.last_hoop_detection_time = 0  # Time of last hoop detection
         self.hoop_detection_interval = 5.0  # Detect hoop every 5 seconds (ring doesn't move)
         
@@ -69,6 +70,7 @@ class LiveCameraDetection:
         # Improved detection parameters - Relaxed for better detection
         self.score_cooldown = 1.0  # Seconds between score detections (1.0s cooldown to prevent duplicates)
         self.miss_cooldown = 0.5  # Seconds between miss detections (0.5s cooldown to prevent duplicates)
+        self.global_result_cooldown = 2.0  # Global cooldown: no score OR miss can be registered within 2 seconds of last result
         self.trajectory_history_time = 2.0  # Keep trajectory for 2 seconds
         self.min_trajectory_points = 3  # Minimum points needed for trajectory analysis (reduced)
         self.hoop_zone_margin = 0.7  # Margin for considering ball "near" hoop (increased for better miss detection)
@@ -595,7 +597,7 @@ class LiveCameraDetection:
             results = self.model.predict(
                 source=inference_frame,
                 imgsz=self.imgsz,
-                conf=0.52,  # Increased by 15% (was 0.45, now 0.52) - higher confidence for more reliable ball and hoop tracking
+                conf=0.35,  # High confidence threshold (75%) for more reliable ball detection - reduces false positives
                 device=self.device,
                 half=self.use_half,
                 classes=detect_classes,
@@ -778,9 +780,14 @@ class LiveCameraDetection:
                         # Check score box - this is the most important check
                         if trajectory_through_score:
                             # Trajectory went through score box = SCORE!
-                            if current_time - self.last_score_time > self.score_cooldown:
+                            # Check both score cooldown AND global cooldown (no score/miss within 2s)
+                            time_since_last_score = current_time - self.last_score_time
+                            time_since_last_result = current_time - self.last_result_time
+                            if (time_since_last_score > self.score_cooldown and 
+                                time_since_last_result > self.global_result_cooldown):
                                 self.score += 1
                                 self.last_score_time = current_time
+                                self.last_result_time = current_time  # Update global cooldown
                                 self.ball_scored_in_current_entry = True
                                 self.shot_result_registered = True
                                 self.trajectory_length_at_result = current_trajectory_length  # Mark this trajectory as processed
@@ -795,9 +802,14 @@ class LiveCameraDetection:
                             final_score_check = self.trajectory_goes_through_score_box(self.ball_trajectory, self.hoop_bbox)
                             if final_score_check:
                                 # Trajectory went through score box = SCORE!
-                                if current_time - self.last_score_time > self.score_cooldown:
+                                # Check both score cooldown AND global cooldown (no score/miss within 2s)
+                                time_since_last_score = current_time - self.last_score_time
+                                time_since_last_result = current_time - self.last_result_time
+                                if (time_since_last_score > self.score_cooldown and 
+                                    time_since_last_result > self.global_result_cooldown):
                                     self.score += 1
                                     self.last_score_time = current_time
+                                    self.last_result_time = current_time  # Update global cooldown
                                     self.ball_scored_in_current_entry = True
                                     self.shot_result_registered = True
                                     self.trajectory_length_at_result = current_trajectory_length  # Mark this trajectory as processed
@@ -807,8 +819,13 @@ class LiveCameraDetection:
                                         print(f"  -> SCORE registered via final trajectory check (Shot ID: {self.current_shot_id}, Trajectory length: {current_trajectory_length})")
                             else:
                                 # Trajectory went through shot box but NOT score box = MISS
-                                if current_time - self.last_miss_time > self.miss_cooldown:
+                                # Check both miss cooldown AND global cooldown (no score/miss within 2s)
+                                time_since_last_miss = current_time - self.last_miss_time
+                                time_since_last_result = current_time - self.last_result_time
+                                if (time_since_last_miss > self.miss_cooldown and 
+                                    time_since_last_result > self.global_result_cooldown):
                                     self.record_miss(event_time=current_time)
+                                    self.last_result_time = current_time  # Update global cooldown
                                     self.shot_result_registered = True
                                     self.trajectory_length_at_result = current_trajectory_length  # Mark this trajectory as processed
                                     self.shot_state = 'missed'
@@ -858,9 +875,15 @@ class LiveCameraDetection:
                     # Only check if this trajectory segment hasn't been processed
                     if self.trajectory_length_at_result is None or current_trajectory_length > self.trajectory_length_at_result:
                         trajectory_through_score_fallback = self.trajectory_goes_through_score_box(self.ball_trajectory, self.hoop_bbox)
-                        if trajectory_through_score_fallback and current_time - self.last_score_time > self.score_cooldown:
+                        # Check both score cooldown AND global cooldown (no score/miss within 2s)
+                        time_since_last_score = current_time - self.last_score_time
+                        time_since_last_result = current_time - self.last_result_time
+                        if (trajectory_through_score_fallback and 
+                            time_since_last_score > self.score_cooldown and 
+                            time_since_last_result > self.global_result_cooldown):
                             self.score += 1
                             self.last_score_time = current_time
+                            self.last_result_time = current_time  # Update global cooldown
                             self.ball_scored_in_current_entry = True
                             self.shot_result_registered = True
                             self.trajectory_length_at_result = current_trajectory_length  # Mark as processed
@@ -891,7 +914,11 @@ class LiveCameraDetection:
                     if self.frames_without_ball >= self.max_prediction_frames * 2:
                         # Ball really gone, finalize shot as miss if not scored
                         if not self.shot_result_registered:
-                            if current_time - self.last_miss_time > self.miss_cooldown:
+                            # Check both miss cooldown AND global cooldown (no score/miss within 2s)
+                            time_since_last_miss = current_time - self.last_miss_time
+                            time_since_last_result = current_time - self.last_result_time
+                            if (time_since_last_miss > self.miss_cooldown and 
+                                time_since_last_result > self.global_result_cooldown):
                                 self.record_miss(event_time=current_time)
                                 self.shot_result_registered = True
                                 self.shot_state = 'missed'
@@ -979,9 +1006,15 @@ class LiveCameraDetection:
         if event_time is None:
             event_time = time.time()
 
-        if force or (event_time - self.last_miss_time > self.miss_cooldown):
+        # Check both miss cooldown AND global cooldown (no score/miss within 2s)
+        time_since_last_miss = event_time - self.last_miss_time
+        time_since_last_result = event_time - self.last_result_time
+        
+        if force or (time_since_last_miss > self.miss_cooldown and 
+                     time_since_last_result > self.global_result_cooldown):
             self.misses += 1
             self.last_miss_time = event_time
+            self.last_result_time = event_time  # Update global cooldown
             print(f"MISS! Total misses: {self.misses}")
     
     def run_detection(self):

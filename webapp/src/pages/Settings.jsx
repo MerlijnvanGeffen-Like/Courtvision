@@ -1,5 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../context/ThemeContext'
+import { useAuth } from '../context/AuthContext'
+import { healthAPI } from '../utils/api'
 import Header from '../components/Header'
 import BottomNav from '../components/BottomNav'
 import './Page.css'
@@ -7,10 +10,35 @@ import './Settings.css'
 
 function Settings() {
   const { theme, toggleTheme } = useTheme()
-  const [sensitivity, setSensitivity] = useState(50) // 0-100
-  const [deviceStatus, setDeviceStatus] = useState('Connected')
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+  const [deviceStatus, setDeviceStatus] = useState('Checking...')
 
-  const sensitivityLabel = sensitivity < 33 ? 'Low' : sensitivity < 67 ? 'Medium' : 'High'
+  // Check backend connection status
+  useEffect(() => {
+    const checkBackendStatus = async () => {
+      try {
+        await healthAPI.check()
+        setDeviceStatus('Connected')
+      } catch (error) {
+        setDeviceStatus('Disconnected')
+      }
+    }
+
+    // Check immediately
+    checkBackendStatus()
+
+    // Check every 5 seconds
+    const interval = setInterval(checkBackendStatus, 5000)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
+
   const themeLabel = theme === 'dark' ? 'Dark' : 'Light'
 
   return (
@@ -39,30 +67,31 @@ function Settings() {
             </div>
 
             <div className="setting-section">
-              <h3 className="setting-section-title">Camera Settings</h3>
-              <p className="setting-section-description">Configure camera detection sensitivity and position</p>
-              <div className="sensitivity-control">
-                <div className="sensitivity-header">
-                  <span className="setting-label">Sensitivity</span>
-                  <span className="sensitivity-value">{sensitivityLabel}</span>
+              <h3 className="setting-section-title">User Info</h3>
+              <p className="setting-section-description">Manage your account information</p>
+              {user && (
+                <div className="user-info-content">
+                  <div className="user-info-row">
+                    <span className="setting-label">Username</span>
+                    <span className="user-username">{user.username}</span>
+                  </div>
+                  {user.email && (
+                    <div className="user-info-row">
+                      <span className="setting-label">Email</span>
+                      <span className="user-email">{user.email}</span>
+                    </div>
+                  )}
+                  <button className="user-logout-button" onClick={handleLogout}>
+                    Logout
+                  </button>
                 </div>
-                <div className="slider-container" style={{ '--slider-value': `${sensitivity}%` }}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={sensitivity}
-                    onChange={(e) => setSensitivity(Number(e.target.value))}
-                    className="sensitivity-slider"
-                  />
-                </div>
-              </div>
+              )}
             </div>
 
             <div className="setting-section">
               <h3 className="setting-section-title">Hardware Device</h3>
               <p className="setting-section-description">
-                Status: <span className={`status-text ${deviceStatus === 'Connected' ? 'connected' : 'disconnected'}`}>
+                Status: <span className={`status-text ${deviceStatus === 'Connected' ? 'connected' : deviceStatus === 'Disconnected' ? 'disconnected' : 'checking'}`}>
                   {deviceStatus}
                 </span>
               </p>

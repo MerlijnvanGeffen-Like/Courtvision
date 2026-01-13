@@ -197,7 +197,7 @@
 
 .camera-icon {
   width: 64px;
-  height: 80px;
+  height: 64px;
   background-color: var(--bg-quaternary);
   border-radius: 50%;
   display: flex;
@@ -229,24 +229,6 @@
   margin-bottom: 16px;
 }
 
-.start-camera-btn {
-  background: linear-gradient(167.93deg, var(--accent-orange) 0%, var(--accent-red) 100%);
-  border: none;
-  border-radius: 14px;
-  height: 36px;
-  padding: 0 24px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: white;
-  font-size: 14px;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.start-camera-btn:hover {
-  opacity: 0.9;
-}
 
 .camera-overlay {
   position: absolute;
@@ -291,35 +273,6 @@
   font-weight: 600;
 }
 
-.stop-camera-btn {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  right: 12px;
-  background: var(--bg-tertiary);
-  opacity: 0.9;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--text-primary);
-  font-size: 14px;
-  cursor: pointer;
-  transition: background-color 0.2s, opacity 0.2s;
-}
-
-.stop-camera-btn:hover {
-  opacity: 1;
-}
-
-.stop-camera-btn .icon-img {
-  width: 16px;
-  height: 16px;
-  filter: brightness(0) invert(1);
-}
 
 .controls {
   display: flex;
@@ -370,7 +323,6 @@
   vertical-align: middle;
 }
 
-.start-camera-btn .icon-img,
 .primary-btn .icon-img {
   width: 16px;
   height: 16px;

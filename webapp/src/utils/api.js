@@ -109,4 +109,24 @@ export const cameraAPI = {
   }
 }
 
+// Health check API calls (no auth required)
+export const healthAPI = {
+  check: async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/health', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+      if (!response.ok) {
+        throw new Error('Backend not available')
+      }
+      return await response.json()
+    } catch (error) {
+      throw new Error('Backend not available')
+    }
+  }
+}
+
 export { getToken, setToken, removeToken }

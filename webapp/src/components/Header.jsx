@@ -1,15 +1,6 @@
-import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
 import './Header.css'
 
 function Header() {
-  const { user, logout } = useAuth()
-  const navigate = useNavigate()
-
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
 
   return (
     <div className="header">
@@ -23,14 +14,6 @@ function Header() {
             <p className="logo-subtitle">Basketball Tracking</p>
           </div>
         </div>
-        {user && (
-          <div className="header-user">
-            <span className="header-username">{user.username}</span>
-            <button className="header-logout" onClick={handleLogout}>
-              Logout
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )

@@ -43,12 +43,25 @@ function Stats() {
     return () => clearInterval(interval)
   }, [])
 
-  const currentMade = stats.current_session?.shots_made || 0
-  const currentAccuracy = stats.current_session?.accuracy || 0.0
-  const totalSessions = stats.all_time?.total_sessions || 0
-  const totalShotsMade = stats.all_time?.total_shots_made || 0
-  const averageAccuracy = stats.all_time?.average_accuracy || 0.0
-  const totalPlayTime = stats.all_time?.total_play_time_formatted || '0m'
+  const currentMade = stats.current_session?.shots_made ?? 0
+  const currentAccuracy = typeof stats.current_session?.accuracy === 'number' 
+    ? stats.current_session.accuracy.toFixed(1) 
+    : '0.0'
+  const totalSessions = stats.all_time?.total_sessions ?? 0
+  const totalShotsMade = stats.all_time?.total_shots_made ?? 0
+  const averageAccuracy = typeof stats.all_time?.average_accuracy === 'number'
+    ? stats.all_time.average_accuracy.toFixed(1)
+    : '0.0'
+  const totalPlayTime = stats.all_time?.total_play_time_formatted ?? '0m'
+  
+  // Debug: log what we're displaying
+  console.log('Displaying stats:', {
+    totalSessions,
+    totalShotsMade,
+    averageAccuracy,
+    totalPlayTime,
+    allTimeData: stats.all_time
+  })
 
   return (
     <div className="page stats-page">

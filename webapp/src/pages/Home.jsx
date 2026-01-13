@@ -12,8 +12,6 @@ function Home() {
   const [madeShots, setMadeShots] = useState(0)
   const [totalShots, setTotalShots] = useState(0)
   const [time, setTime] = useState('00:00')
-  const [isActive, setIsActive] = useState(false)
-  const [isPaused, setIsPaused] = useState(true)
   const [cameraActive, setCameraActive] = useState(false)
   const [playersDetected, setPlayersDetected] = useState(0)
   
@@ -53,7 +51,7 @@ function Home() {
 
   // Timer logic
   useEffect(() => {
-    if (isActive && !isPaused) {
+    if (cameraActive) {
       startTimeRef.current = Date.now() - elapsedTimeRef.current
       timerRef.current = setInterval(() => {
         const elapsed = Date.now() - startTimeRef.current
@@ -72,7 +70,7 @@ function Home() {
         clearInterval(timerRef.current)
       }
     }
-  }, [isActive, isPaused])
+  }, [cameraActive])
 
   const handleStart = async () => {
     if (!cameraActive) {
@@ -81,8 +79,6 @@ function Home() {
         const response = await cameraAPI.start()
         if (response.status === 'success') {
           setCameraActive(true)
-          setIsActive(true)
-          setIsPaused(false)
           elapsedTimeRef.current = 0
           setTime('00:00')
           // Refresh stats after starting
@@ -94,23 +90,16 @@ function Home() {
         alert('Error starting camera: ' + errorMessage)
       }
     } else {
-      // Toggle pause/resume
-      setIsPaused(!isPaused)
-      setIsActive(!isPaused)
-    }
-  }
-
-  const handleStopCamera = async () => {
-    try {
-      await cameraAPI.stop()
-      setCameraActive(false)
-      setIsActive(false)
-      setIsPaused(true)
-      elapsedTimeRef.current = 0
-      setTime('00:00')
-      fetchStats()
-    } catch (error) {
-      console.error('Error stopping camera:', error)
+      // Stop camera
+      try {
+        await cameraAPI.stop()
+        setCameraActive(false)
+        elapsedTimeRef.current = 0
+        setTime('00:00')
+        fetchStats()
+      } catch (error) {
+        console.error('Error stopping camera:', error)
+      }
     }
   }
 
@@ -181,7 +170,7 @@ function Home() {
                 <span>Time</span>
               </div>
               <div className="stat-value time">{time}</div>
-              <div className="stat-subvalue">{isPaused ? 'Paused' : 'Active'}</div>
+              <div className="stat-subvalue">{cameraActive ? 'Active' : 'Inactive'}</div>
             </div>
           </div>
         </div>
@@ -210,10 +199,6 @@ function Home() {
                   e.target.style.display = 'none'
                 }}
               />
-              <button className="stop-camera-btn" onClick={handleStopCamera}>
-                <img src="/icons/stopcam.svg" alt="Stop Camera" className="icon-img" />
-                Stop Camera
-              </button>
             </>
           ) : (
             <div className="camera-inactive">
@@ -222,10 +207,6 @@ function Home() {
               </div>
               <h3>Camera Inactive</h3>
               <p>Start camera to begin tracking</p>
-              <button className="start-camera-btn" onClick={handleStart}>
-                <img src="/icons/startcam.svg" alt="Start Camera" className="icon-img" />
-                Start Camera
-              </button>
             </div>
           )}
         </div>
@@ -235,12 +216,17 @@ function Home() {
             className="primary-btn" 
             onClick={handleStart}
           >
-            {isPaused ? (
-              <img src="/icons/play.svg" alt="Play" className="icon-img" />
+            {!cameraActive ? (
+              <>
+                <img src="/icons/startcam.svg" alt="Start Camera" className="icon-img" />
+                Start Camera
+              </>
             ) : (
-              <img src="/icons/pause.svg" alt="Pause" className="icon-img" />
+              <>
+                <img src="/icons/stopcam.svg" alt="Stop Camera" className="icon-img" />
+                Stop Camera
+              </>
             )}
-            {isPaused ? 'Start' : 'Pause'}
           </button>
           <button className="secondary-btn" onClick={handleReset}>
             <img src="/icons/restart.svg" alt="Restart" className="icon-img" />

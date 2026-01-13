@@ -166,6 +166,47 @@
 }
 
 .status-text.disconnected {
-  color: var(--text-secondary);
+  color: #ff4444; /* Red color for disconnected */
 }
 
+.status-text.checking {
+  color: #888888; /* Gray color for checking */
+}
+
+.user-info-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.user-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+}
+
+.user-username,
+.user-email {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.user-logout-button {
+  margin-top: 8px;
+  padding: 10px 16px;
+  background: linear-gradient(177.29deg, var(--accent-orange) 0%, var(--accent-red) 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  width: 100%;
+}
+
+.user-logout-button:hover {
+  opacity: 0.9;
+}
