@@ -67,6 +67,12 @@ class LiveCameraDetection:
         self.shot_lockout_time = 2.0  # Time after shot result before new shot can be detected (seconds)
         self.trajectory_length_at_result = None  # Track trajectory length when result was registered (prevents duplicate results for same trajectory)
         
+        # Entry/Exit tracking to prevent double counts - only count when ball ENTERS box
+        self.ball_was_in_score_box = False  # Track if ball was in score box in previous frame
+        self.ball_was_in_shot_box = False  # Track if ball was in shot box in previous frame
+        self.score_box_entry_registered = False  # Track if we already registered entry into score box for this shot
+        self.shot_box_entry_registered = False  # Track if we already registered entry into shot box for this shot
+        
         # Improved detection parameters - Relaxed for better detection
         self.score_cooldown = 1.0  # Seconds between score detections (1.0s cooldown to prevent duplicates)
         self.miss_cooldown = 0.5  # Seconds between miss detections (0.5s cooldown to prevent duplicates)
@@ -742,44 +748,45 @@ class LiveCameraDetection:
             ]
             
             # Update shot state machine - Two-box system: Shot box (larger) and Score box (smaller)
-            # TRAJECTORY-BASED SYSTEM: Everything based on trajectory line (orange/yellow line)
+            # ENTRY/EXIT SYSTEM: Only count when ball ENTERS box (prevents double counts)
             if self.hoop_bbox is not None:
-                # Always check trajectory first - this is the ONLY source of truth
-                # Don't use current ball position, only trajectory
-                trajectory_through_score = self.trajectory_goes_through_score_box(self.ball_trajectory, self.hoop_bbox)
-                trajectory_through_shot = self.trajectory_goes_through_shot_box(self.ball_trajectory, self.hoop_bbox)
+                # Check if ball is currently in boxes (using current position, not trajectory)
+                # This is more reliable for entry/exit detection
+                ball_currently_in_score_box = self.is_ball_in_score_box(ball_center, self.hoop_bbox)
+                ball_currently_in_shot_box = self.is_ball_in_shot_box(ball_center, self.hoop_bbox)
+                
+                # Detect ENTRY into boxes (was not in box, now in box)
+                score_box_entry = ball_currently_in_score_box and not self.ball_was_in_score_box
+                shot_box_entry = ball_currently_in_shot_box and not self.ball_was_in_shot_box
+                
+                # Detect EXIT from boxes (was in box, now not in box)
+                score_box_exit = not ball_currently_in_score_box and self.ball_was_in_score_box
+                shot_box_exit = not ball_currently_in_shot_box and self.ball_was_in_shot_box
                 
                 if self.debug_mode and len(self.ball_trajectory) > 0:
-                    print(f"\n[DEBUG] State: {self.shot_state}, Trajectory points: {len(self.ball_trajectory)}, Through Shot Box: {trajectory_through_shot}, Through Score Box: {trajectory_through_score}, Result registered: {self.shot_result_registered}")
+                    print(f"\n[DEBUG] State: {self.shot_state}, In Score Box: {ball_currently_in_score_box}, In Shot Box: {ball_currently_in_shot_box}, Score Entry: {score_box_entry}, Shot Entry: {shot_box_entry}, Result registered: {self.shot_result_registered}")
                 
                 if self.shot_state == 'idle':
-                    # Detect shot: trajectory goes through green box (shot box)
-                    if trajectory_through_shot:
-                        # Shot detected via trajectory! Start tracking this shot
+                    # Detect shot: ball ENTERS shot box (green box)
+                    if shot_box_entry:
+                        # Shot detected! Start tracking this shot
                         self.shot_state = 'shooting'
                         self.ball_in_hoop_zone = True
                         self.ball_entry_time = current_time
                         self.ball_scored_in_current_entry = False
                         self.shot_result_registered = False  # Reset for new shot
-                        self.trajectory_length_at_result = None  # Reset trajectory tracking
+                        self.score_box_entry_registered = False  # Reset score box entry tracking
+                        self.shot_box_entry_registered = True  # Mark shot box entry
                         self.current_shot_id += 1  # Increment shot ID for new shot
                         if self.debug_mode:
-                            print(f"  -> Shot detected via trajectory! (trajectory through shot box, Shot ID: {self.current_shot_id})")
+                            print(f"  -> Shot detected! (ball entered shot box, Shot ID: {self.current_shot_id})")
                 
                 elif self.shot_state == 'shooting':
-                    # CRITICAL: Only allow ONE result per trajectory
-                    # Track trajectory length to prevent duplicate results for same trajectory
-                    current_trajectory_length = len(self.ball_trajectory)
-                    
-                    # If we already registered a result for this trajectory length, skip
-                    if self.trajectory_length_at_result is not None and current_trajectory_length <= self.trajectory_length_at_result:
-                        # This trajectory segment was already processed, skip
-                        if self.debug_mode:
-                            print(f"  -> Trajectory already processed (length {current_trajectory_length} <= {self.trajectory_length_at_result}), skipping")
-                    elif not self.shot_result_registered:
-                        # Check score box - this is the most important check
-                        if trajectory_through_score:
-                            # Trajectory went through score box = SCORE!
+                    # CRITICAL: Only count when ball ENTERS score box (prevents double counts)
+                    if not self.shot_result_registered:
+                        # Check if ball ENTERED score box (red box) - this is a SCORE!
+                        if score_box_entry and not self.score_box_entry_registered:
+                            # Ball just entered score box = SCORE!
                             # Check both score cooldown AND global cooldown (no score/miss within 2s)
                             time_since_last_score = current_time - self.last_score_time
                             time_since_last_result = current_time - self.last_result_time
@@ -790,48 +797,27 @@ class LiveCameraDetection:
                                 self.last_result_time = current_time  # Update global cooldown
                                 self.ball_scored_in_current_entry = True
                                 self.shot_result_registered = True
-                                self.trajectory_length_at_result = current_trajectory_length  # Mark this trajectory as processed
+                                self.score_box_entry_registered = True  # Mark that we registered this entry
                                 self.shot_state = 'scored'
-                                print(f"🎯 SCORE! (Trajectory through score box) Total: {self.score} (Shot ID: {self.current_shot_id})")
+                                print(f"🎯 SCORE! (ball entered score box) Total: {self.score} (Shot ID: {self.current_shot_id})")
                                 if self.debug_mode:
-                                    print(f"  -> SCORE registered via trajectory (Shot ID: {self.current_shot_id}, Trajectory length: {current_trajectory_length})")
-                        # Only check for miss if trajectory is no longer in shot box AND we haven't scored
-                        elif not trajectory_through_shot:
-                            # Shot finished - trajectory left shot box
-                            # Final check: make absolutely sure trajectory didn't go through score box
-                            final_score_check = self.trajectory_goes_through_score_box(self.ball_trajectory, self.hoop_bbox)
-                            if final_score_check:
-                                # Trajectory went through score box = SCORE!
-                                # Check both score cooldown AND global cooldown (no score/miss within 2s)
-                                time_since_last_score = current_time - self.last_score_time
-                                time_since_last_result = current_time - self.last_result_time
-                                if (time_since_last_score > self.score_cooldown and 
-                                    time_since_last_result > self.global_result_cooldown):
-                                    self.score += 1
-                                    self.last_score_time = current_time
-                                    self.last_result_time = current_time  # Update global cooldown
-                                    self.ball_scored_in_current_entry = True
-                                    self.shot_result_registered = True
-                                    self.trajectory_length_at_result = current_trajectory_length  # Mark this trajectory as processed
-                                    self.shot_state = 'scored'
-                                    print(f"🎯 SCORE! (Final check - trajectory through score box) Total: {self.score} (Shot ID: {self.current_shot_id})")
-                                    if self.debug_mode:
-                                        print(f"  -> SCORE registered via final trajectory check (Shot ID: {self.current_shot_id}, Trajectory length: {current_trajectory_length})")
-                            else:
-                                # Trajectory went through shot box but NOT score box = MISS
-                                # Check both miss cooldown AND global cooldown (no score/miss within 2s)
-                                time_since_last_miss = current_time - self.last_miss_time
-                                time_since_last_result = current_time - self.last_result_time
-                                if (time_since_last_miss > self.miss_cooldown and 
-                                    time_since_last_result > self.global_result_cooldown):
-                                    self.record_miss(event_time=current_time)
-                                    self.last_result_time = current_time  # Update global cooldown
-                                    self.shot_result_registered = True
-                                    self.trajectory_length_at_result = current_trajectory_length  # Mark this trajectory as processed
-                                    self.shot_state = 'missed'
-                                    print(f"❌ MISS! (Trajectory through shot box, not score box) Total misses: {self.misses} (Shot ID: {self.current_shot_id})")
-                                    if self.debug_mode:
-                                        print(f"  -> MISS registered via trajectory (Shot ID: {self.current_shot_id}, Trajectory length: {current_trajectory_length})")
+                                    print(f"  -> SCORE registered via score box entry (Shot ID: {self.current_shot_id})")
+                        
+                        # Check if ball EXITED shot box without scoring - this is a MISS
+                        elif shot_box_exit and not self.score_box_entry_registered:
+                            # Ball left shot box without entering score box = MISS
+                            # Check both miss cooldown AND global cooldown (no score/miss within 2s)
+                            time_since_last_miss = current_time - self.last_miss_time
+                            time_since_last_result = current_time - self.last_result_time
+                            if (time_since_last_miss > self.miss_cooldown and 
+                                time_since_last_result > self.global_result_cooldown):
+                                self.record_miss(event_time=current_time)
+                                self.last_result_time = current_time  # Update global cooldown
+                                self.shot_result_registered = True
+                                self.shot_state = 'missed'
+                                print(f"❌ MISS! (ball exited shot box without entering score box) Total misses: {self.misses} (Shot ID: {self.current_shot_id})")
+                                if self.debug_mode:
+                                    print(f"  -> MISS registered via shot box exit (Shot ID: {self.current_shot_id})")
                     else:
                         # Result already registered for this shot, reset
                         self.shot_state = 'idle'
@@ -840,57 +826,38 @@ class LiveCameraDetection:
                 
                 elif self.shot_state == 'scored':
                     # After scoring, reset quickly to allow tracking to continue
-                    # Reset after short cooldown OR when trajectory no longer in shot box
-                    # IMPORTANT: Ball tracking continues regardless of state!
-                    reset_after_score = (current_time - self.last_score_time > 1.0) or (not trajectory_through_shot and current_time - self.last_score_time > 0.3)
+                    # Reset after short cooldown OR when ball exits shot box
+                    reset_after_score = (current_time - self.last_score_time > 1.0) or (shot_box_exit and current_time - self.last_score_time > 0.3)
                     if reset_after_score:
                         self.shot_state = 'idle'
                         self.ball_in_hoop_zone = False
                         self.shot_result_registered = False  # Reset for next shot
-                        self.trajectory_length_at_result = None  # Reset trajectory tracking
+                        self.score_box_entry_registered = False  # Reset score box entry tracking
+                        self.shot_box_entry_registered = False  # Reset shot box entry tracking
                         if self.debug_mode:
                             print(f"  -> State reset to IDLE after score (ready for next shot)")
-                    # Allow new shot detection even in 'scored' state if trajectory comes back in shot box
+                    # Allow new shot detection even in 'scored' state if ball enters shot box again
                     # This ensures continuous tracking
-                    if trajectory_through_shot and (current_time - self.last_score_time > 0.5):
-                        # Trajectory is back in shot box - prepare for potential new shot
+                    if shot_box_entry and (current_time - self.last_score_time > 0.5):
+                        # Ball entered shot box again - prepare for potential new shot
                         if self.debug_mode:
-                            print(f"  -> Trajectory back in shot box after score, preparing for new shot")
+                            print(f"  -> Ball entered shot box again after score, preparing for new shot")
                 
                 elif self.shot_state == 'missed':
                     # After miss, reset quickly to allow tracking to continue
-                    reset_after_miss = (current_time - self.last_miss_time > 1.0) or (not trajectory_through_shot and current_time - self.last_miss_time > 0.3)
+                    reset_after_miss = (current_time - self.last_miss_time > 1.0) or (shot_box_exit and current_time - self.last_miss_time > 0.3)
                     if reset_after_miss:
                         self.shot_state = 'idle'
                         self.ball_in_hoop_zone = False
                         self.shot_result_registered = False  # Reset for next shot
-                        self.trajectory_length_at_result = None  # Reset trajectory tracking
+                        self.score_box_entry_registered = False  # Reset score box entry tracking
+                        self.shot_box_entry_registered = False  # Reset shot box entry tracking
                         if self.debug_mode:
                             print(f"  -> State reset to IDLE after miss (ready for next shot)")
                 
-                # Fallback: ALWAYS check trajectory for score box - catch any missed scores
-                # But only if this trajectory hasn't been processed yet
-                if self.shot_state != 'scored' and not self.shot_result_registered:
-                    current_trajectory_length = len(self.ball_trajectory)
-                    # Only check if this trajectory segment hasn't been processed
-                    if self.trajectory_length_at_result is None or current_trajectory_length > self.trajectory_length_at_result:
-                        trajectory_through_score_fallback = self.trajectory_goes_through_score_box(self.ball_trajectory, self.hoop_bbox)
-                        # Check both score cooldown AND global cooldown (no score/miss within 2s)
-                        time_since_last_score = current_time - self.last_score_time
-                        time_since_last_result = current_time - self.last_result_time
-                        if (trajectory_through_score_fallback and 
-                            time_since_last_score > self.score_cooldown and 
-                            time_since_last_result > self.global_result_cooldown):
-                            self.score += 1
-                            self.last_score_time = current_time
-                            self.last_result_time = current_time  # Update global cooldown
-                            self.ball_scored_in_current_entry = True
-                            self.shot_result_registered = True
-                            self.trajectory_length_at_result = current_trajectory_length  # Mark as processed
-                            self.shot_state = 'scored'
-                            print(f"🎯 SCORE! (fallback check - trajectory through score box) Total: {self.score} (Shot ID: {self.current_shot_id})")
-                            if self.debug_mode:
-                                print(f"  -> Fallback score detected via trajectory (Shot ID: {self.current_shot_id}, Trajectory length: {current_trajectory_length})")
+                # Update tracking for next frame
+                self.ball_was_in_score_box = ball_currently_in_score_box
+                self.ball_was_in_shot_box = ball_currently_in_shot_box
             
             self.last_ball_center = ball_center
             self.last_ball_velocity = velocity
@@ -907,6 +874,11 @@ class LiveCameraDetection:
                     # No active shot, safe to reset
                     self.last_ball_center = None
                     self.last_ball_velocity = None
+                    # Reset entry tracking when ball is lost
+                    self.ball_was_in_score_box = False
+                    self.ball_was_in_shot_box = False
+                    self.score_box_entry_registered = False
+                    self.shot_box_entry_registered = False
                 elif self.shot_state in ['shooting']:
                     # During active shot, keep tracking even if ball temporarily not detected
                     # Ball might be occluded by ring or moving fast
@@ -925,10 +897,20 @@ class LiveCameraDetection:
                                 print(f"❌ MISS! (ball lost) Total misses: {self.misses}")
                         self.last_ball_center = None
                         self.last_ball_velocity = None
+                        # Reset entry tracking when ball is lost
+                        self.ball_was_in_score_box = False
+                        self.ball_was_in_shot_box = False
+                        self.score_box_entry_registered = False
+                        self.shot_box_entry_registered = False
                 else:
                     # Scored or missed state - can reset
                     self.last_ball_center = None
                     self.last_ball_velocity = None
+                    # Reset entry tracking when ball is lost
+                    self.ball_was_in_score_box = False
+                    self.ball_was_in_shot_box = False
+                    self.score_box_entry_registered = False
+                    self.shot_box_entry_registered = False
         
         # Manual drawing for better performance
         annotated_frame = frame.copy()
